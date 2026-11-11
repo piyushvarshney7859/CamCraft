@@ -45,7 +45,35 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.piyush.camcraft.ui.theme.CamCraftTheme
 import java.text.SimpleDateFormat
 import java.util.Locale
+import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.yalantis.ucrop.UCrop
+import java.io.File
 
+fun saveCroppedImageToGallery(context: android.content.Context, croppedUri: Uri) {
+    val name = "Crop_${System.currentTimeMillis()}.jpg"
+    val contentValues = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CamCraft")
+        }
+    }
+
+    val resolver = context.contentResolver
+    val newUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+
+    newUri?.let { destUri ->
+        resolver.openOutputStream(destUri)?.use { outputStream ->
+            resolver.openInputStream(croppedUri)?.use { inputStream ->
+                inputStream.copyTo(outputStream)
+            }
+        }
+    }
+}
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -128,24 +156,71 @@ fun GalleryScreen(viewModel: GalleryViewModel = viewModel(), onBack: () -> Unit)
     val images by viewModel.images.collectAsState()
     val context = LocalContext.current
 
-    // State for EXIF popup
-    var selectedImageForExif by remember { mutableStateOf<android.net.Uri?>(null) }
+    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var exifData by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         viewModel.loadImages()
     }
 
-    // EXIF Dialog
-    if (selectedImageForExif != null) {
+    // uCrop Activity Launcher
+    val uCropLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val resultUri = UCrop.getOutput(result.data!!)
+            if (resultUri != null) {
+                // 1. Save it permanently to the gallery
+                saveCroppedImageToGallery(context, resultUri)
+
+                // 2. Refresh the grid so the new image instantly appears
+                viewModel.loadImages()
+
+                // 3. Close the popup to reveal the updated gallery
+                selectedImageUri = null
+                Toast.makeText(context, "Cropped image saved!", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Photo Action Menu (EXIF, Crop, Share)
+    if (selectedImageUri != null) {
         AlertDialog(
-            onDismissRequest = { selectedImageForExif = null },
-            title = { Text("Image Metadata (EXIF)") },
-            text = { Text(exifData) },
-            confirmButton = {
-                TextButton(onClick = { selectedImageForExif = null }) {
-                    Text("Close")
+            onDismissRequest = {
+                selectedImageUri = null
+                exifData = ""
+            },
+            title = { Text("Photo Options") },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (exifData.isNotEmpty()) {
+                        Text(exifData, modifier = Modifier.padding(bottom = 16.dp))
+                    }
+
+                    Button(
+                        onClick = { exifData = getExifInfo(context, selectedImageUri!!) },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    ) { Text("View Metadata (EXIF)") }
+
+                    Button(
+                        onClick = { shareImage(context, selectedImageUri!!) },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                    ) { Text("Share Photo") }
+
+                    Button(
+                        onClick = {
+                            // Create a temporary file to store the cropped image
+                            val destinationUri = Uri.fromFile(File(context.cacheDir, "crop_${System.currentTimeMillis()}.jpg"))
+                            val uCropIntent = UCrop.of(selectedImageUri!!, destinationUri).getIntent(context)
+                            uCropLauncher.launch(uCropIntent)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Crop & Rotate") }
                 }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    selectedImageUri = null
+                    exifData = ""
+                }) { Text("Close") }
             }
         )
     }
@@ -174,11 +249,7 @@ fun GalleryScreen(viewModel: GalleryViewModel = viewModel(), onBack: () -> Unit)
             ) {
                 items(images) { image ->
                     Surface(
-                        onClick = {
-                            // Fetch EXIF data when a photo is tapped
-                            exifData = getExifInfo(context, image.uri)
-                            selectedImageForExif = image.uri
-                        },
+                        onClick = { selectedImageUri = image.uri },
                         modifier = Modifier.padding(4.dp).aspectRatio(1f)
                     ) {
                         AsyncImage(
@@ -344,4 +415,13 @@ private fun takePhoto(imageCapture: ImageCapture, context: android.content.Conte
             }
         }
     )
+}
+
+fun shareImage(context: android.content.Context, uri: Uri) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "image/jpeg"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Share via..."))
 }

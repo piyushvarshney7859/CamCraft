@@ -70,4 +70,6 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.5.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation("com.github.yalantis:ucrop:2.2.8")
+    implementation("androidx.appcompat:appcompat:1.6.1")
 }
