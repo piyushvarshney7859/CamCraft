@@ -67,4 +67,6 @@ dependencies {
 
     // Material Icons (Extended) for camera control icons
     implementation("androidx.compose.material:material-icons-extended:1.5.4")
+    implementation("io.coil-kt:coil-compose:2.5.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
 }
