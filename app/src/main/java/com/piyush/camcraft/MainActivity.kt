@@ -269,40 +269,45 @@ fun GalleryScreen(viewModel: GalleryViewModel = viewModel(), onBack: () -> Unit)
 fun CameraPreviewScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var lensFacing by remember { mutableStateOf(CameraSelector.LENS_FACING_BACK) }
 
-    // 1. Flash State
+    // 1. Remember the PreviewView so it doesn't get destroyed on flip
+    val previewView = remember { androidx.camera.view.PreviewView(context) }
+
+    var lensFacing by remember { mutableStateOf(CameraSelector.LENS_FACING_BACK) }
     var flashMode by remember { mutableIntStateOf(ImageCapture.FLASH_MODE_AUTO) }
     val imageCapture = remember { ImageCapture.Builder().build() }
 
-    // 2. Update flash mode dynamically
+    // Update flash mode dynamically
     LaunchedEffect(flashMode) {
         imageCapture.flashMode = flashMode
     }
 
+    // 2. Safely rebind the camera whenever lensFacing changes
+    LaunchedEffect(lensFacing) {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        cameraProviderFuture.addListener({
+            val cameraProvider = cameraProviderFuture.get()
+            val preview = Preview.Builder().build().also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+            }
+            val cameraSelector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+
+            try {
+                cameraProvider.unbindAll()
+                cameraProvider.bindToLifecycle(
+                    lifecycleOwner, cameraSelector, preview, imageCapture
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
+        // 3. Keep AndroidView extremely simple
         AndroidView(
             modifier = Modifier.fillMaxSize(),
-            factory = { ctx -> androidx.camera.view.PreviewView(ctx) },
-            update = { previewView ->
-                val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-                cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
-                    val cameraSelector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
-
-                    try {
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(
-                            lifecycleOwner, cameraSelector, preview, imageCapture
-                        )
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
-                }, ContextCompat.getMainExecutor(context))
-            }
+            factory = { previewView }
         )
 
         // Top Row for Back Button and Flash Toggle
@@ -320,7 +325,6 @@ fun CameraPreviewScreen(onBack: () -> Unit) {
                 Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
             }
 
-            // Flash Toggle Button
             IconButton(
                 onClick = {
                     flashMode = when (flashMode) {
@@ -351,7 +355,11 @@ fun CameraPreviewScreen(onBack: () -> Unit) {
         ) {
             IconButton(
                 onClick = {
-                    lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+                    lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+                        CameraSelector.LENS_FACING_FRONT
+                    } else {
+                        CameraSelector.LENS_FACING_BACK
+                    }
                 },
                 modifier = Modifier
                     .size(56.dp)
